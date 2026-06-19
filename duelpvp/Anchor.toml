@@ -1,14 +1,12 @@
-[toolchain]
-anchor_version = "0.30.1"
 
 [features]
 resolution = true
 skip-lint = false
 
-[programs.localnet]
-duelpvp = "Due1PvP1111111111111111111111111111111111111"
-
 [programs.devnet]
+duelpvp = "FpVpkZzyW9tdbXxH9ZUMSe9sghnroDNUkw7uiEgPJ89q"
+
+[programs.localnet]
 duelpvp = "Due1PvP1111111111111111111111111111111111111"
 
 [registry]
@@ -21,10 +19,16 @@ wallet = "~/.config/solana/id.json"
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 
-# ORAO VRF program, loaded into the local validator for testing.
-# Download once:  see README (anchor test clones it from devnet).
+[test]
+startup_wait = 5000
+shutdown_wait = 2000
+upgradeable = false
+
 [test.validator]
+bind_address = "0.0.0.0"
 url = "https://api.devnet.solana.com"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899
 
 [[test.validator.clone]]
 address = "VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y"

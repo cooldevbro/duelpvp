@@ -1,25 +1,31 @@
 /**
  * One-time setup after deploy: create the fee treasury PDA.
- * The wallet that runs this becomes the treasury admin (can withdraw fees).
+ * MUST be run by the program's upgrade authority (i.e. the wallet that deployed
+ * the program). That wallet becomes the treasury admin.
  *
- *   anchor run init-treasury            (uses Anchor.toml provider/cluster)
- *   # or:
  *   npx ts-node scripts/init-treasury.ts
  */
 import * as anchor from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 
+const BPF_LOADER_UPGRADEABLE = new PublicKey(
+  "BPFLoaderUpgradeab1e11111111111111111111111"
+);
+
 (async () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
-
   const program = anchor.workspace.Duelpvp as anchor.Program;
+
   const [treasury] = PublicKey.findProgramAddressSync(
     [Buffer.from("treasury")],
     program.programId
   );
+  const [programData] = PublicKey.findProgramAddressSync(
+    [program.programId.toBuffer()],
+    BPF_LOADER_UPGRADEABLE
+  );
 
-  // Skip if it already exists.
   const existing = await provider.connection.getAccountInfo(treasury);
   if (existing) {
     console.log("Treasury already initialized:", treasury.toBase58());
@@ -31,6 +37,7 @@ import { PublicKey, SystemProgram } from "@solana/web3.js";
     .accounts({
       admin: provider.wallet.publicKey,
       treasury,
+      programData,
       systemProgram: SystemProgram.programId,
     })
     .rpc();

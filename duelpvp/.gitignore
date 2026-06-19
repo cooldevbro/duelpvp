@@ -1,0 +1,16 @@
+.anchor
+target
+node_modules
+test-ledger
+**/*.rs.bk
+.DS_Store
+
+# Never commit keypairs / wallets / secrets
+*keypair*.json
+*-keypair.json
+*.backup.json
+id.json
+wallet*.json
+*.wallet
+.env
+.env.*
