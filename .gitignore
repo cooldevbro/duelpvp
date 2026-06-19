@@ -13,8 +13,15 @@ id.json
 wallet*.json
 *.wallet
 .env
-.env.*!.env.example
+.env.*
+!.env.example
 
 # logs / scratch
 *.log
 *.bak
+
+# editor / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db

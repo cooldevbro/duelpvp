@@ -23,9 +23,9 @@ DUELPVP is a head-to-head **PvP gaming protocol** on Solana. Two players each
 stake SOL, the **smart contract** decides the winner using verifiable
 randomness, and the winner takes the pot. Simple, fast, and provably fair.
 
-The first game is a **dice duel** — but DUELPVP is built as a platform. Cards,
-coin flips, and other PvP games run on the same trustless escrow + randomness
-engine, so every new game inherits the same provably-fair guarantees.
+The live games are a **dice duel** and a **coin flip** — and DUELPVP is built as
+a platform. Both run on the same trustless escrow + randomness engine, and new
+PvP games inherit the same provably-fair guarantees.
 
 > **The golden rule:** the outcome is decided **on-chain** by cryptographic
 > randomness nobody can predict or rig. The website only *animates* a result the
@@ -123,13 +123,15 @@ revenue.
 
 | Item | Value |
 |:-----|:------|
-| **Program ID** | _published at Mainnet launch_ |
-| **Treasury (fee vault)** | _published at Mainnet launch_ |
+| **Network** | Solana Mainnet-Beta |
+| **Program ID** | `8NkYNEeX6eUiNrK89cHfNmZoigaUCdi5NLGKgRFJ77oZ` |
+| **Treasury (fee vault)** | `6HH6su5MAjcNvVUtpeLkWzijnmzBJDn6GxCovHRRMGWY` |
 | **Randomness** | ORAO VRF (`VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y`) |
 
-> 🚀 DUELPVP runs on **Solana Mainnet**. The live program ID and treasury address
-> are published here at launch. The upgrade authority and treasury are secured by
-> a multisig (see [Roadmap to Mainnet](#-roadmap-to-mainnet)).
+> 🚀 DUELPVP runs on **Solana Mainnet**. The program carries an on-chain
+> [`security.txt`](https://github.com/neodyme-labs/solana-security-txt) so explorers
+> show the verified project identity. See [Verify it yourself](#-verify-it-yourself)
+> to confirm the deployed bytecode matches this source.
 
 ---
 
@@ -142,11 +144,11 @@ duelpvp/
 │   ├── state.rs      # account layouts (Duel, Treasury)
 │   └── errors.rs     # custom error messages
 ├── app/
+│   ├── idl/duelpvp.json       # the interface the frontend imports
 │   ├── src/anchor-client.ts   # TypeScript client (call this from the frontend)
 │   └── DiceDuel.html          # standalone animated demo of the full flow
 ├── scripts/init-treasury.ts   # one-time setup, run once after deploy
-├── tests/duelpvp.ts           # automated tests
-└── target/idl/duelpvp.json    # the interface the frontend imports
+└── tests/duelpvp.ts           # automated tests
 ```
 
 ---
@@ -155,7 +157,7 @@ duelpvp/
 
 | Instruction | Who calls it | What it does |
 |:------------|:-------------|:-------------|
-| `create_duel` | Creator | Open a duel, lock in the bet. |
+| `create_duel` | Creator | Open a duel (dice or coin flip), lock in the bet. |
 | `join_duel` | Opponent | Match the bet + request randomness. |
 | `settle_duel` | Anyone | Resolve the match from VRF, pay the winner. |
 | `close_duel` | Creator / anyone | Cancel-refund an unmatched duel (creator only) or settle-sweep / stuck-game refund. |
@@ -163,13 +165,36 @@ duelpvp/
 | `set_paused` / `set_max_bet` | Admin | Safety switches. |
 | `withdraw_treasury` | Admin | Collect accumulated fees. |
 
-> **For frontend devs:** import the IDL at `target/idl/duelpvp.json` (or fetch it
-> on-chain with `anchor idl fetch <program id>`). The helpers in
-> `app/src/anchor-client.ts` build every instruction for you.
+> **For frontend devs:** import the IDL at `app/idl/duelpvp.json`. The helpers in
+> `app/src/anchor-client.ts` build every instruction for you. `create_duel` takes
+> a `kind` (`{ dice: {} }` or `{ coinFlip: {} }`) and a `creatorSide`
+> (`{ heads: {} }` / `{ tails: {} }`, ignored for dice). Settlement is a single
+> `settle_duel` for both games; dice emits `DuelSettled`, coin flip emits
+> `CoinFlipSettled`.
 
 ---
 
-## 🛠️ Build & run (for developers)
+## � Verify it yourself
+
+Don't trust — verify. The deployed program is built from this exact source. You
+can confirm the on-chain bytecode matches the code in this repo:
+
+```bash
+# Hash of the program currently live on mainnet
+solana-verify get-program-hash -u mainnet-beta \
+  8NkYNEeX6eUiNrK89cHfNmZoigaUCdi5NLGKgRFJ77oZ
+
+# Hash of the program built from this repo
+solana-verify get-executable-hash target/deploy/duelpvp.so
+```
+
+Both commands return the **same** SHA-256 — proof the live program is exactly
+what you see here, with no hidden logic. The program also embeds an on-chain
+`security.txt` (project name, site, contact) that block explorers display.
+
+---
+
+## �🛠️ Build & run (for developers)
 
 This program builds with the modern Solana toolchain. **Use `cargo build-sbf`,
 not `anchor build`.**
@@ -214,9 +239,11 @@ Solana CLI 4.x (Agave).
 - [x] ORAO VRF randomness integration
 - [x] Parallel-settlement scaling
 - [x] Full test suite + on-chain validation
+- [x] Dice duel + coin flip game modes
+- [x] **Mainnet launch**
 - [ ] **Professional third-party security audit**
 - [ ] Multisig-secured treasury & upgrade authority
-- [ ] **Mainnet launch + token**
+- [ ] Reproducible verified-build badge
 
 ---
 
