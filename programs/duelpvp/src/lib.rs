@@ -14,6 +14,21 @@ use state::*;
 
 declare_id!("8NkYNEeX6eUiNrK89cHfNmZoigaUCdi5NLGKgRFJ77oZ");
 
+// On-chain security.txt. Explorers like Solscan parse this and show the project
+// name, website, and contacts on the program page. Only built into the program
+// binary, never the CPI/IDL artifacts.
+#[cfg(not(feature = "no-entrypoint"))]
+use solana_security_txt::security_txt;
+#[cfg(not(feature = "no-entrypoint"))]
+security_txt! {
+    name: "DuelPvP",
+    project_url: "https://duelpvp.fun",
+    contacts: "link:https://x.com/DuelPVPfun",
+    policy: "https://github.com/duelpvpfun/duelpvp",
+    preferred_languages: "en",
+    source_code: "https://github.com/duelpvpfun/duelpvp"
+}
+
 pub const HOUSE_FEE_BPS: u64 = 100; // 1.00%
 pub const BPS_DENOMINATOR: u64 = 10_000;
 pub const DUEL_EXPIRY_SECONDS: i64 = 86_400; // stuck-VRF refund safety net

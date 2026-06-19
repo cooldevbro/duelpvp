@@ -23,3 +23,6 @@ idl-build = ["anchor-lang/idl-build"]
 anchor-lang = "0.29.0"
 # ORAO VRF, CPI feature only (we call it, we are not it).
 orao-solana-vrf = { version = "0.4.0", default-features = false, features = ["cpi"] }
+# Embeds an on-chain security.txt that explorers (Solscan) display as project
+# name / website / contacts. No-op at runtime.
+solana-security-txt = "=1.1.3"
