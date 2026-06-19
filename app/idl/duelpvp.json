@@ -245,6 +245,16 @@
           "isSigner": false
         },
         {
+          "name": "treasury",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Fee sink. The 1% house fee is paid here in the same settle tx, so the",
+            "treasury is funded instantly and no fee is ever left stranded in a duel",
+            "escrow. (Ties pay no fee.)"
+          ]
+        },
+        {
           "name": "duel",
           "isMut": true,
           "isSigner": false

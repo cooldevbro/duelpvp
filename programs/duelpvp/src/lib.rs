@@ -287,14 +287,9 @@ pub mod duelpvp {
             let winner = if creator_wins { duel.creator } else { duel.opponent };
             duel.winner = winner;
 
-            // SCALABILITY: the 1% house fee is NOT sent to the treasury here.
-            // Doing so would mark `treasury` as writable in every settle and
-            // serialize all non-tie settles on one account (Solana write-locks
-            // an account per slot). Instead we pay the winner `pot - fee` and
-            // leave `fee` sitting in the duel escrow. The fee is swept to the
-            // treasury later, on the cold `close_duel` path, which is naturally
-            // spread across time and accounts. This keeps settles fully
-            // parallel across thousands of concurrent duels.
+            // Pay the winner `pot - 1%` and send the 1% house fee to the
+            // treasury in this same settle tx. The treasury is funded instantly
+            // and no fee is ever left stranded in a duel escrow.
             let pot = duel.bet_lamports.checked_mul(2).ok_or(DuelError::MathOverflow)?;
             let fee = pot.checked_mul(HOUSE_FEE_BPS).ok_or(DuelError::MathOverflow)? / BPS_DENOMINATOR;
             let win_amount = pot.checked_sub(fee).ok_or(DuelError::MathOverflow)?;
@@ -305,7 +300,8 @@ pub mod duelpvp {
                 ctx.accounts.opponent.to_account_info()
             };
             move_lamports(&duel_ai, &winner_ai, win_amount)?;
-            // `fee` remains in escrow (escrow now holds exactly rent + fee).
+            move_lamports(&duel_ai, &ctx.accounts.treasury.to_account_info(), fee)?;
+            // Escrow now holds exactly its rent; it is reclaimed at close.
         }
 
         match duel.game_kind {
@@ -327,10 +323,12 @@ pub mod duelpvp {
     }
 
     // ---------------------------------------------------------------------
-    // 4) Close / refund. Cold path — also where the accrued house fee is
-    //    swept to the treasury (kept off the hot `settle` path for scale).
-    //    - Settled: sweep the 1% fee left in escrow to the treasury; the rent
-    //      returns to the creator via `close = creator`.
+    // 4) Close / refund. Cold cleanup path.
+    //    - Settled: the 1% fee was already paid to the treasury inside
+    //      `settle_duel`, so the escrow holds only its rent, which returns to
+    //      the creator via `close = creator`. (Any residual above rent — e.g.
+    //      a legacy duel settled before this change — is still swept to the
+    //      treasury here as a safety net.)
     //    - Waiting: only the creator can cancel (no opponent funds at stake),
     //      any time. Creator's bet + rent return via `close = creator`.
     //    - Rolling: only valid if VRF NEVER fulfilled AND past expiry. Refund
@@ -350,14 +348,16 @@ pub mod duelpvp {
         let mut refunded = false;
         match status {
             DuelStatus::Settled => {
-                // Sweep the accrued house fee (everything above rent) to the
-                // treasury, then `close = creator` returns the rent. For ties
-                // this is zero. This is the ONLY place the treasury is written,
-                // keeping non-tie settles fully parallel.
+                // The fee was already paid to the treasury in `settle_duel`, so
+                // normally there is nothing above rent here. As a safety net for
+                // any legacy duel settled before that change, sweep any residual
+                // above rent to the treasury; then `close = creator` returns the
+                // rent. This is a no-op (zero) for duels settled by the current
+                // code and for ties.
                 let duel_ai = ctx.accounts.duel.to_account_info();
                 let rent_min = Rent::get()?.minimum_balance(duel_ai.data_len());
-                let fee = duel_ai.lamports().saturating_sub(rent_min);
-                move_lamports(&duel_ai, &ctx.accounts.treasury.to_account_info(), fee)?;
+                let residual = duel_ai.lamports().saturating_sub(rent_min);
+                move_lamports(&duel_ai, &ctx.accounts.treasury.to_account_info(), residual)?;
             }
             DuelStatus::Waiting => {
                 // Only the creator can cancel an unmatched duel. No opponent
@@ -595,9 +595,11 @@ pub struct SettleDuel<'info> {
     /// CHECK: must equal duel.opponent — payout destination.
     #[account(mut, address = duel.opponent)]
     pub opponent: UncheckedAccount<'info>,
-    // NOTE: the treasury is intentionally NOT in this context. Settle does not
-    // touch the treasury (the fee stays in escrow and is swept at close), so
-    // non-tie settles never write-lock a shared account and run fully parallel.
+    /// Fee sink. The 1% house fee is paid here in the same settle tx, so the
+    /// treasury is funded instantly and no fee is ever left stranded in a duel
+    /// escrow. (Ties pay no fee.)
+    #[account(mut, seeds = [b"treasury"], bump = treasury.bump)]
+    pub treasury: Account<'info, Treasury>,
     #[account(
         mut,
         seeds = [b"duel", game_id.to_le_bytes().as_ref(), creator.key().as_ref()],
