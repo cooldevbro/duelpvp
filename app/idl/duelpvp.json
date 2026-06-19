@@ -1,0 +1,853 @@
+{
+  "version": "0.1.0",
+  "name": "duelpvp",
+  "instructions": [
+    {
+      "name": "initializeTreasury",
+      "docs": [
+        "One-time setup. Gated to the program's upgrade authority (the deployer),",
+        "so a front-runner cannot seize admin by calling this first."
+      ],
+      "accounts": [
+        {
+          "name": "admin",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "treasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "programData",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "by the seeds constraint below, and the handler verifies its owner is the",
+            "upgradeable loader and that its upgrade_authority == admin. It is an",
+            "`UncheckedAccount` (not `Account<ProgramData>`) only to avoid an IDL",
+            "generator limitation with foreign anchor-lang account types; security is",
+            "unchanged."
+          ]
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "setPaused",
+      "accounts": [
+        {
+          "name": "admin",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "treasury",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "setMaxBet",
+      "accounts": [
+        {
+          "name": "admin",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "treasury",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "maxBetLamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdrawTreasury",
+      "accounts": [
+        {
+          "name": "admin",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "treasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "destination",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "createDuel",
+      "accounts": [
+        {
+          "name": "creator",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "duel",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "treasury",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "gameId",
+          "type": "u64"
+        },
+        {
+          "name": "betLamports",
+          "type": "u64"
+        },
+        {
+          "name": "winCondition",
+          "type": {
+            "defined": "WinCondition"
+          }
+        },
+        {
+          "name": "requiredOpponent",
+          "type": {
+            "option": "publicKey"
+          }
+        },
+        {
+          "name": "kind",
+          "type": {
+            "defined": "GameKind"
+          }
+        },
+        {
+          "name": "creatorSide",
+          "type": {
+            "defined": "CoinSide"
+          }
+        }
+      ]
+    },
+    {
+      "name": "joinDuel",
+      "accounts": [
+        {
+          "name": "opponent",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "creator",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "duel",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "vrfConfig",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "vrfTreasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "random",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "vrf",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "gameId",
+          "type": "u64"
+        },
+        {
+          "name": "force",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "settleDuel",
+      "accounts": [
+        {
+          "name": "caller",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "creator",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "opponent",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "duel",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "random",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "gameId",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "closeDuel",
+      "accounts": [
+        {
+          "name": "caller",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "creator",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "opponent",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "path. On the Waiting path the client may pass the creator."
+          ]
+        },
+        {
+          "name": "treasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "random",
+          "isMut": false,
+          "isSigner": false,
+          "docs": [
+            "this to equal duel.randomness and to be UNFULFILLED before refunding.",
+            "On other paths it is unused (client may pass the duel's randomness key)."
+          ]
+        },
+        {
+          "name": "duel",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "gameId",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Duel",
+      "docs": [
+        "Escrow + game state. One PDA per duel.",
+        "Seeds: [b\"duel\", game_id.to_le_bytes(), creator]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gameId",
+            "type": "u64"
+          },
+          {
+            "name": "creator",
+            "type": "publicKey"
+          },
+          {
+            "name": "opponent",
+            "type": "publicKey"
+          },
+          {
+            "name": "requiredOpponent",
+            "type": {
+              "option": "publicKey"
+            }
+          },
+          {
+            "name": "betLamports",
+            "type": "u64"
+          },
+          {
+            "name": "winCondition",
+            "type": {
+              "defined": "WinCondition"
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": "DuelStatus"
+            }
+          },
+          {
+            "name": "gameKind",
+            "type": {
+              "defined": "GameKind"
+            }
+          },
+          {
+            "name": "creatorSide",
+            "type": {
+              "defined": "CoinSide"
+            }
+          },
+          {
+            "name": "force",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "randomness",
+            "type": "publicKey"
+          },
+          {
+            "name": "creatorDice",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "opponentDice",
+            "type": {
+              "array": [
+                "u8",
+                2
+              ]
+            }
+          },
+          {
+            "name": "coinResult",
+            "type": {
+              "defined": "CoinSide"
+            }
+          },
+          {
+            "name": "winner",
+            "type": "publicKey"
+          },
+          {
+            "name": "isTie",
+            "type": "bool"
+          },
+          {
+            "name": "createdAt",
+            "type": "i64"
+          },
+          {
+            "name": "expiry",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Treasury",
+      "docs": [
+        "Fee sink + admin controls. Seeds: [b\"treasury\"]"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "publicKey"
+          },
+          {
+            "name": "paused",
+            "docs": [
+              "Circuit breaker: when true, no new duels can be created."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "maxBetLamports",
+            "docs": [
+              "Optional per-duel cap in lamports. 0 = no limit."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NetworkState",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "config",
+            "type": {
+              "defined": "NetworkConfiguration"
+            }
+          },
+          {
+            "name": "numReceived",
+            "docs": [
+              "Total number of received requests."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "CoinSide",
+      "docs": [
+        "Coin face for the coin-flip game."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Heads"
+          },
+          {
+            "name": "Tails"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DuelStatus",
+      "docs": [
+        "Lifecycle:  Waiting -> Rolling -> Settled"
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Waiting"
+          },
+          {
+            "name": "Rolling"
+          },
+          {
+            "name": "Settled"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GameKind",
+      "docs": [
+        "Which game a duel plays."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Dice"
+          },
+          {
+            "name": "CoinFlip"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WinCondition",
+      "docs": [
+        "Win condition for a dice duel."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "HigherWins"
+          },
+          {
+            "name": "LowerWins"
+          }
+        ]
+      }
+    },
+    {
+      "name": "NetworkConfiguration",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "publicKey"
+          },
+          {
+            "name": "treasury",
+            "type": "publicKey"
+          },
+          {
+            "name": "requestFee",
+            "type": "u64"
+          },
+          {
+            "name": "fulfillmentAuthorities",
+            "type": {
+              "vec": "publicKey"
+            }
+          },
+          {
+            "name": "tokenFeeConfig",
+            "type": {
+              "option": {
+                "defined": "OraoTokenFeeConfig"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "OraoTokenFeeConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "docs": [
+              "ORAO token mint address."
+            ],
+            "type": "publicKey"
+          },
+          {
+            "name": "treasury",
+            "docs": [
+              "ORAO token treasury account."
+            ],
+            "type": "publicKey"
+          },
+          {
+            "name": "fee",
+            "docs": [
+              "Fee in ORAO SPL token smallest units."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "CoinFlipSettled",
+      "fields": [
+        {
+          "name": "gameId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "winner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "creatorSide",
+          "type": {
+            "defined": "CoinSide"
+          },
+          "index": false
+        },
+        {
+          "name": "coinResult",
+          "type": {
+            "defined": "CoinSide"
+          },
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "DuelClosed",
+      "fields": [
+        {
+          "name": "gameId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "refunded",
+          "type": "bool",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "DuelCreated",
+      "fields": [
+        {
+          "name": "gameId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "creator",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "betLamports",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "requiredOpponent",
+          "type": {
+            "option": "publicKey"
+          },
+          "index": false
+        },
+        {
+          "name": "gameKind",
+          "type": {
+            "defined": "GameKind"
+          },
+          "index": false
+        },
+        {
+          "name": "creatorSide",
+          "type": {
+            "defined": "CoinSide"
+          },
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "DuelJoined",
+      "fields": [
+        {
+          "name": "gameId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "opponent",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "randomness",
+          "type": "publicKey",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "DuelSettled",
+      "fields": [
+        {
+          "name": "gameId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "winner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "isTie",
+          "type": "bool",
+          "index": false
+        },
+        {
+          "name": "creatorDice",
+          "type": {
+            "array": [
+              "u8",
+              2
+            ]
+          },
+          "index": false
+        },
+        {
+          "name": "opponentDice",
+          "type": {
+            "array": [
+              "u8",
+              2
+            ]
+          },
+          "index": false
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidBetAmount",
+      "msg": "Bet amount must be greater than zero"
+    },
+    {
+      "code": 6001,
+      "name": "BetTooLarge",
+      "msg": "Bet exceeds the configured maximum"
+    },
+    {
+      "code": 6002,
+      "name": "Paused",
+      "msg": "New duels are currently paused"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidState",
+      "msg": "Duel is not in the expected state for this action"
+    },
+    {
+      "code": 6004,
+      "name": "CannotJoinOwnDuel",
+      "msg": "You cannot join your own duel"
+    },
+    {
+      "code": 6005,
+      "name": "NotInvitedOpponent",
+      "msg": "This duel is private and reserved for a specific opponent"
+    },
+    {
+      "code": 6006,
+      "name": "BadForce",
+      "msg": "Invalid VRF force (must be non-zero random entropy)"
+    },
+    {
+      "code": 6007,
+      "name": "RandomnessMismatch",
+      "msg": "Provided randomness account does not match this duel"
+    },
+    {
+      "code": 6008,
+      "name": "RandomnessNotReady",
+      "msg": "Randomness is not fulfilled yet; try again in a moment"
+    },
+    {
+      "code": 6009,
+      "name": "AlreadyFulfilled",
+      "msg": "Randomness already fulfilled; this duel must be settled, not refunded"
+    },
+    {
+      "code": 6010,
+      "name": "NotExpired",
+      "msg": "Duel has not expired yet"
+    },
+    {
+      "code": 6011,
+      "name": "NotClosable",
+      "msg": "Duel cannot be closed in its current state"
+    },
+    {
+      "code": 6012,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6013,
+      "name": "InsufficientFunds",
+      "msg": "Insufficient funds in escrow"
+    },
+    {
+      "code": 6014,
+      "name": "TreasuryRentViolation",
+      "msg": "Withdrawal would drop the treasury below rent exemption"
+    },
+    {
+      "code": 6015,
+      "name": "Unauthorized",
+      "msg": "Not authorized for this action"
+    }
+  ],
+  "metadata": {
+    "address": "8NkYNEeX6eUiNrK89cHfNmZoigaUCdi5NLGKgRFJ77oZ"
+  }
+}
