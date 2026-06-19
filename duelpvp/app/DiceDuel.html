@@ -1,0 +1,386 @@
+<!--
+  DUELPVP — front-end flow demo (single file, no build step).
+
+  This is the *visualization* layer. It NEVER decides the winner. It plays out
+  the result the smart contract already settled on-chain. Swap the simulated
+  transitions for real data at the four marked points:
+
+    [HOOK A] createDuel succeeded            -> stage = 'lobby'
+    [HOOK B] DuelJoined event / waitForRandomness -> stage = 'countdown'
+    [HOOK C] DuelSettled event (dice+winner) -> stage = 'reveal' (use real dice)
+    [HOOK D] settle tx signature             -> Solscan link href
+
+  Port the markup + CSS into a React component; replace runDemo() with your
+  event subscriptions from anchor-client.ts.
+-->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg: #140d0c;
+    --ivory: #f2e9d4;
+    --ivory-dim: #cdbfa6;
+    --pip: #1c0c0e;
+    --gold: #e6b450;
+    --gold-deep: #b67f24;
+    --win: #5dd6a0;
+    --muted: #93857c;
+    --line: rgba(242, 233, 212, 0.10);
+    --seat: rgba(242, 233, 212, 0.04);
+  }
+
+  * { box-sizing: border-box; }
+
+  .stage-root {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: var(--ivory);
+    background:
+      radial-gradient(120% 90% at 50% -10%, #3a0f16 0%, #260a10 38%, #140d0c 78%);
+    min-height: 560px;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    padding: 30px 26px 34px;
+    position: relative;
+    overflow: hidden;
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  .stage-root::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(140% 70% at 50% 120%, rgba(0,0,0,0.55), transparent 60%);
+    pointer-events: none;
+  }
+
+  .topbar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 26px; position: relative; z-index: 1;
+  }
+  .brand {
+    font-family: 'Syne', sans-serif; font-weight: 800; letter-spacing: -0.02em;
+    font-size: 20px;
+  }
+  .brand span { color: var(--gold); }
+  .status-pill {
+    font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 11px;
+  }
+
+  /* Pot */
+  .pot {
+    text-align: center; position: relative; z-index: 1; margin-bottom: 8px;
+  }
+  .pot-label {
+    font-family: 'Space Mono', monospace; font-size: 11px; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .pot-amount {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 46px;
+    line-height: 1.05; letter-spacing: -0.03em;
+    color: var(--gold);
+    text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+  }
+  .pot-amount .unit { font-size: 22px; color: var(--gold-deep); margin-left: 4px; }
+
+  /* Table / seats */
+  .table {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    gap: 14px; margin: 22px 0 18px; position: relative; z-index: 1;
+  }
+  .seat {
+    background: var(--seat); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 14px 16px; text-align: center; transition: border-color .3s, box-shadow .3s, transform .3s;
+  }
+  .seat.win {
+    border-color: rgba(93, 214, 160, 0.55);
+    box-shadow: 0 0 0 1px rgba(93,214,160,0.25), 0 14px 40px -16px rgba(93,214,160,0.5);
+  }
+  .seat.lose { opacity: 0.5; }
+  .seat-name {
+    font-weight: 600; font-size: 14px; margin-bottom: 3px;
+  }
+  .seat-addr {
+    font-family: 'Space Mono', monospace; font-size: 11px; color: var(--muted);
+    margin-bottom: 14px;
+  }
+  .seat-total {
+    font-family: 'Syne', sans-serif; font-weight: 700; font-size: 13px;
+    color: var(--ivory-dim); margin-top: 12px; min-height: 16px;
+  }
+  .seat.win .seat-total { color: var(--win); }
+
+  .vs {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 15px;
+    color: var(--muted); letter-spacing: 0.05em;
+  }
+
+  /* Dice */
+  .dice { display: flex; gap: 9px; justify-content: center; }
+  .die {
+    width: 42px; height: 42px; border-radius: 9px;
+    background: linear-gradient(145deg, #fbf4e2, #ddccae);
+    box-shadow: inset 0 -3px 5px rgba(0,0,0,0.18), inset 0 2px 3px rgba(255,255,255,0.7), 0 5px 10px -4px rgba(0,0,0,0.6);
+    display: grid; grid-template: repeat(3,1fr)/repeat(3,1fr);
+    padding: 7px; gap: 2px;
+  }
+  .die i {
+    width: 7px; height: 7px; border-radius: 50%; align-self: center; justify-self: center;
+    background: radial-gradient(circle at 35% 30%, #4a2b2f, var(--pip));
+    opacity: 0;
+  }
+  /* pip positions: grid cells 1..9 */
+  .die i:nth-child(1){grid-area:1/1} .die i:nth-child(2){grid-area:1/2}
+  .die i:nth-child(3){grid-area:1/3} .die i:nth-child(4){grid-area:2/1}
+  .die i:nth-child(5){grid-area:2/2} .die i:nth-child(6){grid-area:2/3}
+  .die i:nth-child(7){grid-area:3/1} .die i:nth-child(8){grid-area:3/2}
+  .die i:nth-child(9){grid-area:3/3}
+  .die[data-v="1"] i:nth-child(5){opacity:1}
+  .die[data-v="2"] i:nth-child(1),.die[data-v="2"] i:nth-child(9){opacity:1}
+  .die[data-v="3"] i:nth-child(1),.die[data-v="3"] i:nth-child(5),.die[data-v="3"] i:nth-child(9){opacity:1}
+  .die[data-v="4"] i:nth-child(1),.die[data-v="4"] i:nth-child(3),.die[data-v="4"] i:nth-child(7),.die[data-v="4"] i:nth-child(9){opacity:1}
+  .die[data-v="5"] i:nth-child(1),.die[data-v="5"] i:nth-child(3),.die[data-v="5"] i:nth-child(5),.die[data-v="5"] i:nth-child(7),.die[data-v="5"] i:nth-child(9){opacity:1}
+  .die[data-v="6"] i:nth-child(1),.die[data-v="6"] i:nth-child(3),.die[data-v="6"] i:nth-child(4),.die[data-v="6"] i:nth-child(6),.die[data-v="6"] i:nth-child(7),.die[data-v="6"] i:nth-child(9){opacity:1}
+  .die.tumble { animation: tumble .42s linear infinite; }
+  @keyframes tumble {
+    0%{transform:rotate(-8deg) translateY(0)} 25%{transform:rotate(7deg) translateY(-7px)}
+    50%{transform:rotate(-5deg) translateY(0)} 75%{transform:rotate(9deg) translateY(-4px)}
+    100%{transform:rotate(-8deg) translateY(0)}
+  }
+  .die.lock { animation: lock .4s cubic-bezier(.2,1.4,.4,1) both; }
+  @keyframes lock { 0%{transform:scale(1.18)} 100%{transform:scale(1)} }
+
+  /* Center console */
+  .console {
+    text-align: center; position: relative; z-index: 1; min-height: 92px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  }
+  .count-ring {
+    --p: 0;
+    width: 66px; height: 66px; border-radius: 50%;
+    background:
+      radial-gradient(closest-side, var(--bg) 70%, transparent 71%),
+      conic-gradient(var(--gold) calc(var(--p) * 1%), rgba(242,233,212,0.12) 0);
+    display: grid; place-items: center;
+    font-family: 'Space Mono', monospace; font-size: 18px; font-weight: 700;
+  }
+  .console-msg {
+    font-family: 'Space Mono', monospace; font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .countdown-big {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 52px; color: var(--gold);
+    line-height: 1; animation: pop .9s ease both;
+  }
+  @keyframes pop { from{transform:scale(.6);opacity:0} to{transform:scale(1);opacity:1} }
+
+  .verdict {
+    font-family: 'Syne', sans-serif; font-weight: 800; font-size: 30px;
+    letter-spacing: -0.02em;
+  }
+  .verdict.win { color: var(--win); }
+  .verdict.tie { color: var(--gold); }
+
+  .btn {
+    font-family: 'Inter', sans-serif; font-weight: 600; font-size: 13px;
+    color: var(--bg); background: var(--gold);
+    border: none; border-radius: 10px; padding: 11px 18px; cursor: pointer;
+    transition: filter .2s, transform .1s;
+  }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: translateY(1px); }
+  .btn.ghost { background: transparent; color: var(--ivory-dim); border: 1px solid var(--line); }
+  .btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+
+  .txline {
+    font-family: 'Space Mono', monospace; font-size: 12px; color: var(--muted);
+  }
+  .txline a { color: var(--gold); text-decoration: none; border-bottom: 1px solid var(--gold-deep); }
+  .txline a:hover { filter: brightness(1.15); }
+
+  .demo-controls {
+    margin-top: 22px; padding-top: 18px; border-top: 1px dashed var(--line);
+    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+    position: relative; z-index: 1;
+  }
+  .demo-note {
+    text-align: center; font-size: 11px; color: var(--muted); margin-top: 10px;
+    font-family: 'Space Mono', monospace; letter-spacing: 0.04em;
+  }
+
+  @media (max-width: 560px) {
+    .pot-amount { font-size: 38px; }
+    .die { width: 36px; height: 36px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .die.tumble { animation: none; }
+    .countdown-big, .die.lock { animation: none; }
+  }
+</style>
+
+<div class="stage-root" role="region" aria-label="Dice duel">
+  <div class="topbar">
+    <div class="brand">DUEL<span>PVP</span></div>
+    <div class="status-pill" id="status">Private duel</div>
+  </div>
+
+  <div class="pot">
+    <div class="pot-label">Pot</div>
+    <div class="pot-amount" id="pot">0.20<span class="unit">SOL</span></div>
+  </div>
+
+  <div class="table">
+    <div class="seat" id="seat-creator">
+      <div class="seat-name">You</div>
+      <div class="seat-addr">7Qits…aV3p</div>
+      <div class="dice"><div class="die" id="cd0"></div><div class="die" id="cd1"></div></div>
+      <div class="seat-total" id="ct"></div>
+    </div>
+    <div class="vs">VS</div>
+    <div class="seat" id="seat-opponent">
+      <div class="seat-name" id="opp-name">Opponent</div>
+      <div class="seat-addr" id="opp-addr">waiting…</div>
+      <div class="dice"><div class="die" id="od0"></div><div class="die" id="od1"></div></div>
+      <div class="seat-total" id="ot"></div>
+    </div>
+  </div>
+
+  <div class="console" id="console"></div>
+
+  <div class="demo-controls">
+    <button class="btn" id="sim-join">▶ Simulate opponent joins</button>
+    <button class="btn ghost" id="sim-reset">Reset</button>
+  </div>
+  <div class="demo-note">Demo drives the stages manually. In production, on-chain events drive them.</div>
+</div>
+
+<script>
+(function () {
+  const BET = 0.10;                 // per player, SOL
+  const FEE_BPS = 100;              // 1%
+  const HIGHER_WINS = true;
+  const $ = (id) => document.getElementById(id);
+  const consoleEl = $("console");
+
+  const setDie = (el, v) => { el.dataset.v = String(v); };
+  const dice = { cd0: $("cd0"), cd1: $("cd1"), od0: $("od0"), od1: $("od1") };
+  Object.values(dice).forEach((d) => setDie(d, 1));
+
+  let timers = [];
+  const clearTimers = () => { timers.forEach(clearTimeout); timers.forEach(clearInterval); timers = []; };
+  const later = (fn, ms) => { const t = setTimeout(fn, ms); timers.push(t); return t; };
+
+  function reset() {
+    clearTimers();
+    $("status").textContent = "Private duel";
+    $("pot").innerHTML = (BET * 2).toFixed(2) + '<span class="unit">SOL</span>';
+    $("opp-name").textContent = "Opponent";
+    $("opp-addr").textContent = "waiting…";
+    $("ct").textContent = ""; $("ot").textContent = "";
+    $("seat-creator").className = "seat";
+    $("seat-opponent").className = "seat";
+    Object.values(dice).forEach((d) => { d.className = "die"; setDie(d, 1); });
+    stageLobby();
+  }
+
+  // ---- [HOOK A] createDuel done -> waiting for an opponent (10-min refund) ----
+  function stageLobby() {
+    let remaining = 600; // 10:00
+    consoleEl.innerHTML = `
+      <div class="count-ring" id="ring">10:00</div>
+      <div class="console-msg">Waiting for opponent · auto-refund at 0:00</div>
+      <button class="btn ghost" id="cancel">Cancel &amp; refund</button>`;
+    $("cancel").onclick = () => {
+      clearTimers();
+      consoleEl.innerHTML = `<div class="console-msg">Duel cancelled · ${BET.toFixed(2)} SOL refunded</div>`;
+    };
+    const ring = $("ring");
+    const tick = setInterval(() => {
+      remaining--;
+      const m = Math.floor(remaining / 60), s = remaining % 60;
+      const p = (1 - remaining / 600) * 100;
+      ring.style.setProperty("--p", p.toFixed(1));
+      ring.textContent = `${m}:${String(s).padStart(2, "0")}`;
+      if (remaining <= 0) { // [maps to permissionless close_duel after join_deadline]
+        clearInterval(tick);
+        consoleEl.innerHTML = `<div class="console-msg">No takers · ${BET.toFixed(2)} SOL refunded to you</div>`;
+      }
+    }, 1000);
+    timers.push(tick);
+  }
+
+  // ---- [HOOK B] DuelJoined event -> 5s countdown while VRF fulfils ----
+  function stageJoined() {
+    clearTimers();
+    $("status").textContent = "Both deposited";
+    $("opp-name").textContent = "Opponent";
+    $("opp-addr").textContent = "9bWc…h2KQ";
+    $("seat-opponent").classList.add("ready");
+    let n = 5;
+    const render = () => {
+      consoleEl.innerHTML = `
+        <div class="countdown-big" key="${n}">${n}</div>
+        <div class="console-msg">Rolling — randomness incoming</div>`;
+    };
+    render();
+    const tick = setInterval(() => {
+      n--;
+      if (n <= 0) { clearInterval(tick); stageRolling(); }
+      else { consoleEl.querySelector(".countdown-big").outerHTML =
+        `<div class="countdown-big">${n}</div>`; }
+    }, 1000);
+    timers.push(tick);
+  }
+
+  // ---- dice tumble while we "wait" then lock on the on-chain result ----
+  function stageRolling() {
+    consoleEl.innerHTML = `<div class="console-msg">Rolling…</div>`;
+    Object.values(dice).forEach((d) => d.classList.add("tumble"));
+    const shuffle = setInterval(() => {
+      Object.values(dice).forEach((d) => setDie(d, 1 + Math.floor(Math.random() * 6)));
+    }, 90);
+    timers.push(shuffle);
+    later(() => { clearInterval(shuffle); reveal(); }, 1700);
+  }
+
+  // ---- [HOOK C] DuelSettled event: use the REAL dice + winner from chain ----
+  function reveal() {
+    // In production these four numbers + the winner come from the DuelSettled
+    // event (deriveDice(randomness)). Here we generate a demo roll.
+    const r = () => 1 + Math.floor(Math.random() * 6);
+    const c = [r(), r()], o = [r(), r()];
+    // avoid demo ties for a punchier reveal; chain handles ties by refunding
+    if (c[0] + c[1] === o[0] + o[1]) o[1] = ((o[1]) % 6) + 1;
+
+    const lock = (el, v) => { el.classList.remove("tumble"); setDie(el, v); el.classList.add("lock"); };
+    lock(dice.cd0, c[0]); lock(dice.cd1, c[1]);
+    lock(dice.od0, o[0]); lock(dice.od1, o[1]);
+
+    const cTotal = c[0] + c[1], oTotal = o[0] + o[1];
+    $("ct").textContent = "Total " + cTotal;
+    $("ot").textContent = "Total " + oTotal;
+
+    const creatorWins = HIGHER_WINS ? cTotal > oTotal : cTotal < oTotal;
+    const payout = (BET * 2 * (1 - FEE_BPS / 10000)).toFixed(3);
+
+    later(() => {
+      $("seat-creator").classList.add(creatorWins ? "win" : "lose");
+      $("seat-opponent").classList.add(creatorWins ? "lose" : "win");
+      const who = creatorWins ? "You win" : "Opponent wins";
+      // [HOOK D] real settle tx signature -> Solscan href
+      const sig = "5xQ5demoS8…settleTxSignature";
+      consoleEl.innerHTML = `
+        <div class="verdict win">${who}</div>
+        <div class="txline">Paid ${payout} SOL ·
+          <a href="https://solscan.io/tx/${encodeURIComponent(sig)}" target="_blank" rel="noopener">view on Solscan ↗</a>
+        </div>
+        <button class="btn ghost" id="again">New duel</button>`;
+      $("again").onclick = reset;
+    }, 520);
+  }
+
+  $("sim-join").onclick = stageJoined;
+  $("sim-reset").onclick = reset;
+  reset();
+})();
+</script>
