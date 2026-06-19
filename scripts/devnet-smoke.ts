@@ -40,7 +40,7 @@ const PROGRAM_ID = new PublicKey("FpVpkZzyW9tdbXxH9ZUMSe9sghnroDNUkw7uiEgPJ89q")
 
   console.log("\n→ create_duel ...");
   const sig1 = await program.methods
-    .createDuel(gameId, bet, { higherWins: {} }, null)
+    .createDuel(gameId, bet, { higherWins: {} }, null, { dice: {} }, { heads: {} })
     .accounts({ creator, duel, treasury, systemProgram: SystemProgram.programId })
     .rpc();
   console.log("  ✅ tx:", sig1);

@@ -103,6 +103,8 @@ pub mod duelpvp {
         bet_lamports: u64,
         win_condition: WinCondition,
         required_opponent: Option<Pubkey>,
+        kind: GameKind,
+        creator_side: CoinSide,
     ) -> Result<()> {
         require!(bet_lamports > 0, DuelError::InvalidBetAmount);
 
@@ -114,6 +116,14 @@ pub mod duelpvp {
 
         let now = Clock::get()?.unix_timestamp;
 
+        // Normalize the field that does not apply to the chosen game so stale
+        // input can never influence settlement. Dice ignores `creator_side`;
+        // coin flip ignores `win_condition`.
+        let (win_condition, creator_side) = match kind {
+            GameKind::Dice => (win_condition, CoinSide::Heads),
+            GameKind::CoinFlip => (WinCondition::HigherWins, creator_side),
+        };
+
         let duel = &mut ctx.accounts.duel;
         duel.game_id = game_id;
         duel.creator = ctx.accounts.creator.key();
@@ -122,10 +132,13 @@ pub mod duelpvp {
         duel.bet_lamports = bet_lamports;
         duel.win_condition = win_condition;
         duel.status = DuelStatus::Waiting;
+        duel.game_kind = kind;
+        duel.creator_side = creator_side;
         duel.force = [0u8; 32];
         duel.randomness = Pubkey::default();
         duel.creator_dice = [0u8; 2];
         duel.opponent_dice = [0u8; 2];
+        duel.coin_result = CoinSide::Heads;
         duel.winner = Pubkey::default();
         duel.is_tie = false;
         duel.created_at = now;
@@ -148,6 +161,8 @@ pub mod duelpvp {
             creator: ctx.accounts.creator.key(),
             bet_lamports,
             required_opponent,
+            game_kind: kind,
+            creator_side,
         });
         Ok(())
     }
@@ -226,20 +241,41 @@ pub mod duelpvp {
         let randomness = read_fulfilled_randomness(&ctx.accounts.random)?;
 
         let duel = &mut ctx.accounts.duel;
-        // Unbiased d6: rejection sampling (skip bytes >= 252 so all faces equiprobable).
-        let mut cur = 0usize;
-        duel.creator_dice = [next_d6(&randomness, &mut cur), next_d6(&randomness, &mut cur)];
-        duel.opponent_dice = [next_d6(&randomness, &mut cur), next_d6(&randomness, &mut cur)];
-
-        let cs = duel.creator_dice[0] as u16 + duel.creator_dice[1] as u16;
-        let os = duel.opponent_dice[0] as u16 + duel.opponent_dice[1] as u16;
-
-        let creator_wins = match duel.win_condition {
-            WinCondition::HigherWins => cs > os,
-            WinCondition::LowerWins => cs < os,
-        };
-        let tie = cs == os;
         duel.status = DuelStatus::Settled;
+
+        // Determine the outcome per game kind.
+        //   - Dice: roll two unbiased d6 each, compare totals (existing logic).
+        //   - CoinFlip: derive one unbiased bit; winner is whoever picked the
+        //     resulting side. There is NO tie in coin flip.
+        let (creator_wins, tie) = match duel.game_kind {
+            GameKind::Dice => {
+                // Unbiased d6: rejection sampling (skip bytes >= 252 so all faces equiprobable).
+                let mut cur = 0usize;
+                duel.creator_dice =
+                    [next_d6(&randomness, &mut cur), next_d6(&randomness, &mut cur)];
+                duel.opponent_dice =
+                    [next_d6(&randomness, &mut cur), next_d6(&randomness, &mut cur)];
+
+                let cs = duel.creator_dice[0] as u16 + duel.creator_dice[1] as u16;
+                let os = duel.opponent_dice[0] as u16 + duel.opponent_dice[1] as u16;
+
+                let creator_wins = match duel.win_condition {
+                    WinCondition::HigherWins => cs > os,
+                    WinCondition::LowerWins => cs < os,
+                };
+                (creator_wins, cs == os)
+            }
+            GameKind::CoinFlip => {
+                // 256 is divisible by 2, so `byte & 1` is already perfectly
+                // unbiased over any uniform byte; no rejection is needed. We
+                // still scan for the first byte to be robust against an
+                // all-equal edge buffer, mirroring the dice helper style.
+                let coin_result = next_coin(&randomness);
+                duel.coin_result = coin_result;
+                // No tie path: exactly one side wins.
+                (coin_result == duel.creator_side, false)
+            }
+        };
 
         let duel_ai = duel.to_account_info();
         if tie {
@@ -272,13 +308,21 @@ pub mod duelpvp {
             // `fee` remains in escrow (escrow now holds exactly rent + fee).
         }
 
-        emit!(DuelSettled {
-            game_id: duel.game_id,
-            winner: duel.winner,
-            is_tie: tie,
-            creator_dice: duel.creator_dice,
-            opponent_dice: duel.opponent_dice,
-        });
+        match duel.game_kind {
+            GameKind::Dice => emit!(DuelSettled {
+                game_id: duel.game_id,
+                winner: duel.winner,
+                is_tie: tie,
+                creator_dice: duel.creator_dice,
+                opponent_dice: duel.opponent_dice,
+            }),
+            GameKind::CoinFlip => emit!(CoinFlipSettled {
+                game_id: duel.game_id,
+                winner: duel.winner,
+                creator_side: duel.creator_side,
+                coin_result: duel.coin_result,
+            }),
+        }
         Ok(())
     }
 
@@ -368,6 +412,16 @@ fn next_d6(bytes: &[u8; 64], cursor: &mut usize) -> u8 {
     }
     // Astronomically unlikely fallback (all remaining bytes >= 252).
     bytes[0] % 6 + 1
+}
+
+/// Unbiased coin from the VRF buffer. Since a byte is uniform over 0..=255 and
+/// 256 is even, the low bit is a fair coin with zero bias — no rejection needed.
+fn next_coin(bytes: &[u8; 64]) -> CoinSide {
+    if bytes[0] & 1 == 0 {
+        CoinSide::Heads
+    } else {
+        CoinSide::Tails
+    }
 }
 
 /// Read the 64-byte fulfilled VRF value, erroring if not yet fulfilled.
@@ -593,6 +647,8 @@ pub struct DuelCreated {
     pub creator: Pubkey,
     pub bet_lamports: u64,
     pub required_opponent: Option<Pubkey>,
+    pub game_kind: GameKind,
+    pub creator_side: CoinSide,
 }
 
 #[event]
@@ -609,6 +665,14 @@ pub struct DuelSettled {
     pub is_tie: bool,
     pub creator_dice: [u8; 2],
     pub opponent_dice: [u8; 2],
+}
+
+#[event]
+pub struct CoinFlipSettled {
+    pub game_id: u64,
+    pub winner: Pubkey,
+    pub creator_side: CoinSide,
+    pub coin_result: CoinSide,
 }
 
 #[event]

@@ -1,10 +1,24 @@
 use anchor_lang::prelude::*;
 
-/// Win condition for a duel.
+/// Win condition for a dice duel.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
 pub enum WinCondition {
     HigherWins,
     LowerWins,
+}
+
+/// Which game a duel plays.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum GameKind {
+    Dice,
+    CoinFlip,
+}
+
+/// Coin face for the coin-flip game.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum CoinSide {
+    Heads,
+    Tails,
 }
 
 /// Lifecycle:  Waiting -> Rolling -> Settled
@@ -25,8 +39,12 @@ pub struct Duel {
     pub opponent: Pubkey, // Pubkey::default() until someone joins
     pub required_opponent: Option<Pubkey>, // private duel target
     pub bet_lamports: u64,
-    pub win_condition: WinCondition,
+    pub win_condition: WinCondition, // dice only (ignored for coin flip)
     pub status: DuelStatus,
+
+    // game selection
+    pub game_kind: GameKind,
+    pub creator_side: CoinSide, // coin flip only (ignored for dice)
 
     // randomness (ORAO VRF). `force` is the joiner-supplied request seed.
     pub force: [u8; 32],
@@ -35,7 +53,8 @@ pub struct Duel {
     // outcome (set at settle)
     pub creator_dice: [u8; 2],
     pub opponent_dice: [u8; 2],
-    pub winner: Pubkey, // default on tie
+    pub coin_result: CoinSide, // coin flip only
+    pub winner: Pubkey,        // default on tie
     pub is_tie: bool,
 
     // timing

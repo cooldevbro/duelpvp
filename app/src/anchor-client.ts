@@ -71,6 +71,18 @@ export const HIGHER_WINS: WinCondition = { higherWins: {} };
 export const LOWER_WINS: WinCondition = { lowerWins: {} };
 
 // ---------------------------------------------------------------------------
+// Game kind + coin side
+// ---------------------------------------------------------------------------
+
+export type GameKind = { dice: {} } | { coinFlip: {} };
+export const DICE: GameKind = { dice: {} };
+export const COIN_FLIP: GameKind = { coinFlip: {} };
+
+export type CoinSide = { heads: {} } | { tails: {} };
+export const HEADS: CoinSide = { heads: {} };
+export const TAILS: CoinSide = { tails: {} };
+
+// ---------------------------------------------------------------------------
 // Admin
 // ---------------------------------------------------------------------------
 
@@ -119,12 +131,14 @@ export async function createDuel(
   gameId: BN,
   betLamports: BN,
   winCondition: WinCondition,
-  requiredOpponent: PublicKey | null
+  requiredOpponent: PublicKey | null,
+  kind: GameKind = DICE,
+  creatorSide: CoinSide = HEADS
 ) {
   const [duel] = deriveDuelPda(gameId, creator, program.programId);
   const [treasury] = deriveTreasuryPda(program.programId);
   await program.methods
-    .createDuel(gameId, betLamports, winCondition, requiredOpponent)
+    .createDuel(gameId, betLamports, winCondition, requiredOpponent, kind, creatorSide)
     .accounts({ creator, duel, treasury, systemProgram: SystemProgram.programId })
     .rpc();
   return { duel, gameId };

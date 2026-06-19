@@ -71,7 +71,7 @@ describe("duelpvp", () => {
     const before = await connection.getBalance(creator.publicKey);
 
     await program.methods
-      .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null)
+      .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null, { dice: {} }, { heads: {} })
       .accounts({ creator: creator.publicKey, duel, treasury: treasuryPda(), systemProgram: SystemProgram.programId })
       .signers([creator])
       .rpc();
@@ -100,7 +100,7 @@ describe("duelpvp", () => {
     const duel = duelPda(gameId, creator.publicKey);
     try {
       await program.methods
-        .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null)
+        .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null, { dice: {} }, { heads: {} })
         .accounts({ creator: creator.publicKey, duel, treasury: treasuryPda(), systemProgram: SystemProgram.programId })
         .signers([creator])
         .rpc();
@@ -117,7 +117,7 @@ describe("duelpvp", () => {
     const duel = duelPda(gameId, creator.publicKey);
     try {
       await program.methods
-        .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null)
+        .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null, { dice: {} }, { heads: {} })
         .accounts({ creator: creator.publicKey, duel, treasury: treasuryPda(), systemProgram: SystemProgram.programId })
         .signers([creator])
         .rpc();
@@ -133,7 +133,7 @@ describe("duelpvp", () => {
     const gameId = randomGameId();
     const duel = duelPda(gameId, creator.publicKey);
     await program.methods
-      .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, invited.publicKey)
+      .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, invited.publicKey, { dice: {} }, { heads: {} })
       .accounts({ creator: creator.publicKey, duel, treasury: treasuryPda(), systemProgram: SystemProgram.programId })
       .signers([creator])
       .rpc();
@@ -145,6 +145,35 @@ describe("duelpvp", () => {
     } catch (e: any) {
       assert.match(e.toString(), /NotInvitedOpponent/);
     }
+  });
+
+  it("creates a coin-flip duel and stores game kind + creator side", async () => {
+    const gameId = randomGameId();
+    const duel = duelPda(gameId, creator.publicKey);
+
+    await program.methods
+      .createDuel(gameId, new BN(0.1 * LAMPORTS_PER_SOL), { higherWins: {} }, null, { coinFlip: {} }, { tails: {} })
+      .accounts({ creator: creator.publicKey, duel, treasury: treasuryPda(), systemProgram: SystemProgram.programId })
+      .signers([creator])
+      .rpc();
+
+    const acct = await program.account.duel.fetch(duel);
+    assert.deepEqual(acct.gameKind, { coinFlip: {} }, "game kind is coin flip");
+    assert.deepEqual(acct.creatorSide, { tails: {} }, "creator side stored");
+
+    // cleanup: creator cancels for refund
+    await program.methods
+      .closeDuel(gameId)
+      .accounts({
+        caller: creator.publicKey,
+        creator: creator.publicKey,
+        opponent: creator.publicKey,
+        treasury: treasuryPda(),
+        random: SystemProgram.programId,
+        duel,
+      })
+      .signers([creator])
+      .rpc();
   });
 
   // --------------------------------------------------------------- group 2
