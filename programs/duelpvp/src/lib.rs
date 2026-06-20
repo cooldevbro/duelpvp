@@ -145,12 +145,14 @@ pub mod duelpvp {
         duel.expiry = now.checked_add(DUEL_EXPIRY_SECONDS).ok_or(DuelError::MathOverflow)?;
         duel.bump = ctx.bumps.duel;
 
+        // Stake goes into the per-duel vault (dataless PDA) via a standard
+        // System transfer so it shows on explorers.
         anchor_lang::system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 anchor_lang::system_program::Transfer {
                     from: ctx.accounts.creator.to_account_info(),
-                    to: ctx.accounts.duel.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
                 },
             ),
             bet_lamports,
@@ -188,12 +190,13 @@ pub mod duelpvp {
             duel.bet_lamports
         };
 
+        // Opponent's matching stake goes into the same per-duel vault.
         anchor_lang::system_program::transfer(
             CpiContext::new(
                 ctx.accounts.system_program.to_account_info(),
                 anchor_lang::system_program::Transfer {
                     from: ctx.accounts.opponent.to_account_info(),
-                    to: ctx.accounts.duel.to_account_info(),
+                    to: ctx.accounts.vault.to_account_info(),
                 },
             ),
             bet,
@@ -228,7 +231,7 @@ pub mod duelpvp {
     // ---------------------------------------------------------------------
     // 3) Settle (permissionless). Consume randomness, roll, pay.
     // ---------------------------------------------------------------------
-    pub fn settle_duel(ctx: Context<SettleDuel>, _game_id: u64) -> Result<()> {
+    pub fn settle_duel(ctx: Context<SettleDuel>, game_id: u64) -> Result<()> {
         {
             let duel = &ctx.accounts.duel;
             require!(duel.status == DuelStatus::Rolling, DuelError::InvalidState);
@@ -277,20 +280,27 @@ pub mod duelpvp {
             }
         };
 
-        let duel_ai = duel.to_account_info();
+        // Capture identifiers needed to sign vault transfers (the `&mut duel`
+        // borrow is dropped before the CPIs below).
+        let bet_lamports = duel.bet_lamports;
+        let duel_creator = duel.creator;
+        let vault_ai = ctx.accounts.vault.to_account_info();
+        let system_ai = ctx.accounts.system_program.to_account_info();
+        let vault_bump = ctx.bumps.vault;
+
         if tie {
             duel.is_tie = true;
             duel.winner = Pubkey::default();
-            move_lamports(&duel_ai, &ctx.accounts.creator.to_account_info(), duel.bet_lamports)?;
-            move_lamports(&duel_ai, &ctx.accounts.opponent.to_account_info(), duel.bet_lamports)?;
+            // Refund both stakes out of the vault (no fee on a tie).
+            vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, bet_lamports, game_id, &duel_creator, vault_bump)?;
+            vault_payout(&vault_ai, &ctx.accounts.opponent.to_account_info(), &system_ai, bet_lamports, game_id, &duel_creator, vault_bump)?;
         } else {
             let winner = if creator_wins { duel.creator } else { duel.opponent };
             duel.winner = winner;
 
             // Pay the winner `pot - 1%` and send the 1% house fee to the
-            // treasury in this same settle tx. The treasury is funded instantly
-            // and no fee is ever left stranded in a duel escrow.
-            let pot = duel.bet_lamports.checked_mul(2).ok_or(DuelError::MathOverflow)?;
+            // treasury in this same settle tx. The treasury is funded instantly.
+            let pot = bet_lamports.checked_mul(2).ok_or(DuelError::MathOverflow)?;
             let fee = pot.checked_mul(HOUSE_FEE_BPS).ok_or(DuelError::MathOverflow)? / BPS_DENOMINATOR;
             let win_amount = pot.checked_sub(fee).ok_or(DuelError::MathOverflow)?;
 
@@ -299,9 +309,9 @@ pub mod duelpvp {
             } else {
                 ctx.accounts.opponent.to_account_info()
             };
-            move_lamports(&duel_ai, &winner_ai, win_amount)?;
-            move_lamports(&duel_ai, &ctx.accounts.treasury.to_account_info(), fee)?;
-            // Escrow now holds exactly its rent; it is reclaimed at close.
+            vault_payout(&vault_ai, &winner_ai, &system_ai, win_amount, game_id, &duel_creator, vault_bump)?;
+            vault_payout(&vault_ai, &ctx.accounts.treasury.to_account_info(), &system_ai, fee, game_id, &duel_creator, vault_bump)?;
+            // Vault is now empty; the duel's rent is reclaimed at close.
         }
 
         match duel.game_kind {
@@ -336,35 +346,33 @@ pub mod duelpvp {
     //      `close = creator`, so both players are made whole. If the VRF IS
     //      fulfilled the duel must be SETTLED, not refunded (see race guard).
     // ---------------------------------------------------------------------
-    pub fn close_duel(ctx: Context<CloseDuel>, _game_id: u64) -> Result<()> {
+    pub fn close_duel(ctx: Context<CloseDuel>, game_id: u64) -> Result<()> {
         let now = Clock::get()?.unix_timestamp;
         let caller = ctx.accounts.caller.key();
 
-        let (status, bet, opponent_key, expiry, creator, randomness, game_id) = {
+        let (status, bet, opponent_key, expiry, creator, randomness, _gid) = {
             let d = &ctx.accounts.duel;
             (d.status, d.bet_lamports, d.opponent, d.expiry, d.creator, d.randomness, d.game_id)
         };
 
+        let vault_ai = ctx.accounts.vault.to_account_info();
+        let system_ai = ctx.accounts.system_program.to_account_info();
+        let vault_bump = ctx.bumps.vault;
+
         let mut refunded = false;
         match status {
             DuelStatus::Settled => {
-                // The fee was already paid to the treasury in `settle_duel`, so
-                // normally there is nothing above rent here. As a safety net for
-                // any legacy duel settled before that change, sweep any residual
-                // above rent to the treasury; then `close = creator` returns the
-                // rent. This is a no-op (zero) for duels settled by the current
-                // code and for ties.
-                let duel_ai = ctx.accounts.duel.to_account_info();
-                let rent_min = Rent::get()?.minimum_balance(duel_ai.data_len());
-                let residual = duel_ai.lamports().saturating_sub(rent_min);
-                move_lamports(&duel_ai, &ctx.accounts.treasury.to_account_info(), residual)?;
+                // The stakes + fee were already paid out of the vault in
+                // `settle_duel`, so the vault is empty. The duel's own rent
+                // returns to the creator via `close = creator`. Nothing to do.
             }
             DuelStatus::Waiting => {
-                // Only the creator can cancel an unmatched duel. No opponent
-                // funds are ever at stake here, so there is no need for a
-                // timeout or a permissionless refund path.
+                // Only the creator can cancel an unmatched duel. Refund the
+                // creator's stake out of the vault; the duel's rent returns via
+                // `close = creator`.
                 require!(caller == creator, DuelError::Unauthorized);
-                refunded = true; // creator bet + rent leave via close = creator
+                vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, bet, game_id, &creator, vault_bump)?;
+                refunded = true;
             }
             DuelStatus::Rolling => {
                 // RACE GUARD: if the randomness was already fulfilled, this duel
@@ -382,12 +390,10 @@ pub mod duelpvp {
                 );
                 require!(now > expiry, DuelError::NotExpired);
                 require!(ctx.accounts.opponent.key() == opponent_key, DuelError::Unauthorized);
-                // Refund opponent's bet; creator's bet + rent leave via close = creator.
-                move_lamports(
-                    &ctx.accounts.duel.to_account_info(),
-                    &ctx.accounts.opponent.to_account_info(),
-                    bet,
-                )?;
+                // Refund BOTH stakes out of the vault (creator + opponent); the
+                // duel's rent returns to the creator via `close = creator`.
+                vault_payout(&vault_ai, &ctx.accounts.opponent.to_account_info(), &system_ai, bet, game_id, &creator, vault_bump)?;
+                vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, bet, game_id, &creator, vault_bump)?;
                 refunded = true;
             }
         }
@@ -468,6 +474,43 @@ fn move_lamports(from: &AccountInfo, to: &AccountInfo, amount: u64) -> Result<()
     Ok(())
 }
 
+/// Move lamports OUT of the per-duel escrow `vault` via a real System-Program
+/// transfer signed by the vault PDA. Unlike `move_lamports` (raw lamport math
+/// on a data-carrying PDA), this produces a standard SOL transfer that block
+/// explorers render as "+X SOL -> recipient". The vault is a dataless,
+/// system-owned PDA, so the System Program permits a CPI transfer out of it.
+fn vault_payout<'info>(
+    vault: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    amount: u64,
+    game_id: u64,
+    creator: &Pubkey,
+    vault_bump: u8,
+) -> Result<()> {
+    if amount == 0 {
+        return Ok(());
+    }
+    let game_id_bytes = game_id.to_le_bytes();
+    let seeds: &[&[u8]] = &[
+        b"vault",
+        game_id_bytes.as_ref(),
+        creator.as_ref(),
+        core::slice::from_ref(&vault_bump),
+    ];
+    anchor_lang::system_program::transfer(
+        CpiContext::new_with_signer(
+            system_program.clone(),
+            anchor_lang::system_program::Transfer {
+                from: vault.clone(),
+                to: to.clone(),
+            },
+            &[seeds],
+        ),
+        amount,
+    )
+}
+
 // =========================================================================
 // Account contexts
 // =========================================================================
@@ -541,6 +584,16 @@ pub struct CreateDuel<'info> {
         bump
     )]
     pub duel: Account<'info, Duel>,
+    /// CHECK: dataless, system-owned per-duel escrow that holds the staked SOL.
+    /// Canonical PDA enforced by seeds; never carries data. Deposits land here
+    /// via System transfer and payouts leave via a vault-signed System transfer
+    /// so explorers render them as standard SOL transfers.
+    #[account(
+        mut,
+        seeds = [b"vault", game_id.to_le_bytes().as_ref(), creator.key().as_ref()],
+        bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
     // Read-only: enforces pause + max-bet. Must be initialized first.
     #[account(seeds = [b"treasury"], bump = treasury.bump)]
     pub treasury: Account<'info, Treasury>,
@@ -561,6 +614,14 @@ pub struct JoinDuel<'info> {
         has_one = creator,
     )]
     pub duel: Account<'info, Duel>,
+    /// CHECK: dataless per-duel escrow PDA (see CreateDuel). Receives the
+    /// opponent's matching stake via System transfer.
+    #[account(
+        mut,
+        seeds = [b"vault", game_id.to_le_bytes().as_ref(), creator.key().as_ref()],
+        bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
 
     // ORAO VRF
     #[account(
@@ -607,8 +668,17 @@ pub struct SettleDuel<'info> {
         has_one = creator,
     )]
     pub duel: Account<'info, Duel>,
+    /// CHECK: dataless per-duel escrow PDA (see CreateDuel). Winner payout and
+    /// the house fee are paid out of here via vault-signed System transfers.
+    #[account(
+        mut,
+        seeds = [b"vault", game_id.to_le_bytes().as_ref(), creator.key().as_ref()],
+        bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
     /// CHECK: ORAO randomness account; checked == duel.randomness in handler.
     pub random: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -622,9 +692,19 @@ pub struct CloseDuel<'info> {
     /// path. On the Waiting path the client may pass the creator.
     #[account(mut)]
     pub opponent: UncheckedAccount<'info>,
-    // Treasury receives the accrued 1% fee on the Settled path. Canonical PDA.
+    // Treasury receives any residual on the Settled path (normally zero now).
     #[account(mut, seeds = [b"treasury"], bump = treasury.bump)]
     pub treasury: Account<'info, Treasury>,
+    /// CHECK: dataless per-duel escrow PDA (see CreateDuel). On the Waiting
+    /// (creator-cancel) and Rolling (stuck-VRF refund) paths, staked SOL is
+    /// returned out of here via vault-signed System transfers. On the Settled
+    /// path it is already empty.
+    #[account(
+        mut,
+        seeds = [b"vault", game_id.to_le_bytes().as_ref(), creator.key().as_ref()],
+        bump,
+    )]
+    pub vault: UncheckedAccount<'info>,
     /// CHECK: ORAO randomness account. On the Rolling path the handler requires
     /// this to equal duel.randomness and to be UNFULFILLED before refunding.
     /// On other paths it is unused (client may pass the duel's randomness key).
@@ -637,6 +717,7 @@ pub struct CloseDuel<'info> {
         close = creator,
     )]
     pub duel: Account<'info, Duel>,
+    pub system_program: Program<'info, System>,
 }
 
 // =========================================================================

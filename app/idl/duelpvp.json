@@ -121,6 +121,16 @@
           "isSigner": false
         },
         {
+          "name": "vault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "Canonical PDA enforced by seeds; never carries data. Deposits land here",
+            "via System transfer and payouts leave via a vault-signed System transfer",
+            "so explorers render them as standard SOL transfers."
+          ]
+        },
+        {
           "name": "treasury",
           "isMut": false,
           "isSigner": false
@@ -183,6 +193,14 @@
           "name": "duel",
           "isMut": true,
           "isSigner": false
+        },
+        {
+          "name": "vault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "opponent's matching stake via System transfer."
+          ]
         },
         {
           "name": "vrfConfig",
@@ -260,7 +278,20 @@
           "isSigner": false
         },
         {
+          "name": "vault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "the house fee are paid out of here via vault-signed System transfers."
+          ]
+        },
+        {
           "name": "random",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
           "isMut": false,
           "isSigner": false
         }
@@ -299,6 +330,16 @@
           "isSigner": false
         },
         {
+          "name": "vault",
+          "isMut": true,
+          "isSigner": false,
+          "docs": [
+            "(creator-cancel) and Rolling (stuck-VRF refund) paths, staked SOL is",
+            "returned out of here via vault-signed System transfers. On the Settled",
+            "path it is already empty."
+          ]
+        },
+        {
           "name": "random",
           "isMut": false,
           "isSigner": false,
@@ -310,6 +351,11 @@
         {
           "name": "duel",
           "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
           "isSigner": false
         }
       ],
