@@ -287,22 +287,31 @@ pub mod duelpvp {
         let vault_ai = ctx.accounts.vault.to_account_info();
         let system_ai = ctx.accounts.system_program.to_account_info();
         let vault_bump = ctx.bumps.vault;
+        // Pay out against the vault's ACTUAL balance so it always drains to
+        // exactly zero. A dataless system account left with a non-zero
+        // sub-rent balance is rejected by the runtime (InsufficientFundsForRent),
+        // so we must never leave dust behind. Any stray lamports go to the
+        // winner (or, on a tie, the opponent) — negligible and player-favorable.
+        let vault_balance = vault_ai.lamports();
 
         if tie {
             duel.is_tie = true;
             duel.winner = Pubkey::default();
-            // Refund both stakes out of the vault (no fee on a tie).
-            vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, bet_lamports, game_id, &duel_creator, vault_bump)?;
-            vault_payout(&vault_ai, &ctx.accounts.opponent.to_account_info(), &system_ai, bet_lamports, game_id, &duel_creator, vault_bump)?;
+            // Refund both stakes; opponent absorbs any dust so the vault hits 0.
+            let creator_refund = bet_lamports.min(vault_balance);
+            let opponent_refund = vault_balance.checked_sub(creator_refund).ok_or(DuelError::MathOverflow)?;
+            vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, creator_refund, game_id, &duel_creator, vault_bump)?;
+            vault_payout(&vault_ai, &ctx.accounts.opponent.to_account_info(), &system_ai, opponent_refund, game_id, &duel_creator, vault_bump)?;
         } else {
             let winner = if creator_wins { duel.creator } else { duel.opponent };
             duel.winner = winner;
 
-            // Pay the winner `pot - 1%` and send the 1% house fee to the
-            // treasury in this same settle tx. The treasury is funded instantly.
+            // Fee is 1% of the nominal pot; the winner receives the ENTIRE
+            // remaining vault balance minus the fee, so the vault drains to 0.
             let pot = bet_lamports.checked_mul(2).ok_or(DuelError::MathOverflow)?;
             let fee = pot.checked_mul(HOUSE_FEE_BPS).ok_or(DuelError::MathOverflow)? / BPS_DENOMINATOR;
-            let win_amount = pot.checked_sub(fee).ok_or(DuelError::MathOverflow)?;
+            let fee = fee.min(vault_balance);
+            let win_amount = vault_balance.checked_sub(fee).ok_or(DuelError::MathOverflow)?;
 
             let winner_ai = if creator_wins {
                 ctx.accounts.creator.to_account_info()
@@ -368,10 +377,12 @@ pub mod duelpvp {
             }
             DuelStatus::Waiting => {
                 // Only the creator can cancel an unmatched duel. Refund the
-                // creator's stake out of the vault; the duel's rent returns via
+                // ENTIRE vault balance to the creator (drains to exactly zero,
+                // absorbing any dust); the duel's rent returns via
                 // `close = creator`.
                 require!(caller == creator, DuelError::Unauthorized);
-                vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, bet, game_id, &creator, vault_bump)?;
+                let vault_balance = vault_ai.lamports();
+                vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, vault_balance, game_id, &creator, vault_bump)?;
                 refunded = true;
             }
             DuelStatus::Rolling => {
@@ -390,10 +401,15 @@ pub mod duelpvp {
                 );
                 require!(now > expiry, DuelError::NotExpired);
                 require!(ctx.accounts.opponent.key() == opponent_key, DuelError::Unauthorized);
-                // Refund BOTH stakes out of the vault (creator + opponent); the
-                // duel's rent returns to the creator via `close = creator`.
-                vault_payout(&vault_ai, &ctx.accounts.opponent.to_account_info(), &system_ai, bet, game_id, &creator, vault_bump)?;
-                vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, bet, game_id, &creator, vault_bump)?;
+                // Refund both stakes out of the vault; the opponent gets their
+                // bet and the creator gets the rest (absorbing any dust) so the
+                // vault drains to exactly zero. The duel's rent returns to the
+                // creator via `close = creator`.
+                let vault_balance = vault_ai.lamports();
+                let opponent_refund = bet.min(vault_balance);
+                let creator_refund = vault_balance.checked_sub(opponent_refund).ok_or(DuelError::MathOverflow)?;
+                vault_payout(&vault_ai, &ctx.accounts.opponent.to_account_info(), &system_ai, opponent_refund, game_id, &creator, vault_bump)?;
+                vault_payout(&vault_ai, &ctx.accounts.creator.to_account_info(), &system_ai, creator_refund, game_id, &creator, vault_bump)?;
                 refunded = true;
             }
         }
