@@ -40,8 +40,8 @@ PvP games inherit the same provably-fair guarantees.
 |:----:|:-------------|
 | **1. Create** | You pick your bet, the game rules, and whether it's public or invite-only. Your SOL goes into a unique vault for *that match only*. |
 | **2. Join** | An opponent matches your bet. In the **same transaction**, fresh randomness is requested from ORAO VRF — so nobody can see the result before committing. |
-| **3. Play & Settle** | A few seconds later the randomness lands. Anyone can trigger `settle` — the contract resolves the match from the verified randomness and **instantly pays the winner**. |
-| **4. Win** | The winner receives the full pot minus a **1% house fee**. A tie refunds both players in full, no fee. |
+| **3. Play & Settle** | A few seconds later the randomness lands. Anyone can trigger `settle` — the contract resolves the match from the verified randomness and **instantly pays the winner and the 1% fee in the same transaction**. |
+| **4. Win** | The winner receives the full pot minus a **1% house fee**. A tie refunds both players in full, no fee. Every payout, refund, and fee is a standard SOL transfer you can see on Solscan. |
 
 If nobody joins your match, you can **cancel anytime for a full refund** — your
 SOL never leaves your own game vault, and it never touches the house.
@@ -81,11 +81,15 @@ only ever move in three ways, all enforced by code:
   └─────────────┘                └──────────┘
 ```
 
+- **Each duel holds its stake in a dedicated, dataless vault PDA.** Deposits,
+  payouts, refunds, and the fee are all real **System-Program SOL transfers**, so
+  every movement is visible and verifiable on Solscan (`+X SOL → winner`,
+  `+X SOL → treasury`).
 - **Refunds always come from your own game's vault** — never from the treasury,
   never from another game. Games can't cross-pay.
-- **The winner is always paid from the staked pot** held in escrow. The payout is
-  pure on-chain math (no external call), so it can never "run out of gas" or fail
-  to pay.
+- **The winner is always paid from the staked pot** held in the vault. The payout
+  is a direct transfer with no external dependency, so it can't "run out of gas"
+  or fail to pay.
 - **The treasury only ever collects the 1% fee.** It cannot be drained into a
   refund or a payout — there is no code path for that.
 
@@ -95,13 +99,12 @@ only ever move in three ways, all enforced by code:
 
 DUELPVP is engineered for **thousands of simultaneous duels**:
 
-- **Every game is independent.** Each duel uses its own accounts, so the network
-  processes them **in parallel** — no global queue.
-- **Settlements never bottleneck.** The 1% fee is parked in each game's vault and
-  swept to the treasury later, so paying out winners never competes for a shared
-  lock. Thousands of games can settle at the same time.
+- **Every game is independent.** Each duel uses its own duel + vault accounts, so
+  the network processes them **in parallel** — no global queue.
 - **No griefing.** Because randomness is requested per-game with the joiner's own
   entropy, nobody can clog or front-run the system.
+- **Permissionless settle.** Anyone can settle a fulfilled duel; the winner is
+  paid regardless of who triggers it.
 
 ---
 
@@ -113,9 +116,10 @@ DUELPVP is engineered for **thousands of simultaneous duels**:
 | Tie | **0%** — both players fully refunded | — |
 | No opponent | **0%** — creator fully refunded | — |
 
-The fee is collected by the program's **treasury account** and can only be
-withdrawn by the admin (the project's deployer key). House fees are the project's
-revenue.
+The 1% fee is transferred to the program's **treasury account in the same
+transaction that pays the winner** — instant and visible on Solscan. It can only
+be withdrawn by the admin (the project's deployer key). House fees are the
+project's revenue.
 
 ---
 
@@ -127,11 +131,13 @@ revenue.
 | **Program ID** | `8NkYNEeX6eUiNrK89cHfNmZoigaUCdi5NLGKgRFJ77oZ` |
 | **Treasury (fee vault)** | `6HH6su5MAjcNvVUtpeLkWzijnmzBJDn6GxCovHRRMGWY` |
 | **Randomness** | ORAO VRF (`VRFzZoJdhFWL8rkvu87LpKM3RbcVezpMEc6X5GVDr7y`) |
+| **Build status** | ✅ Verified (OtterSec registry) |
 
-> 🚀 DUELPVP runs on **Solana Mainnet**. The program carries an on-chain
-> [`security.txt`](https://github.com/neodyme-labs/solana-security-txt) so explorers
-> show the verified project identity. See [Verify it yourself](#-verify-it-yourself)
-> to confirm the deployed bytecode matches this source.
+> 🚀 DUELPVP runs on **Solana Mainnet** with a **verified build** — the deployed
+> bytecode is proven to match this public source. The program also carries an
+> on-chain [`security.txt`](https://github.com/neodyme-labs/solana-security-txt)
+> so explorers show the verified project identity. See
+> [Verify it yourself](#-verify-it-yourself) to confirm it.
 
 ---
 
@@ -140,7 +146,7 @@ revenue.
 ```
 duelpvp/
 ├── programs/duelpvp/src/
-│   ├── lib.rs        # the on-chain program: create, join, settle, close
+│   ├── lib.rs        # the on-chain program: create, join, settle, close (+ per-duel vault)
 │   ├── state.rs      # account layouts (Duel, Treasury)
 │   └── errors.rs     # custom error messages
 ├── app/
@@ -160,7 +166,7 @@ duelpvp/
 | `create_duel` | Creator | Open a duel (dice or coin flip), lock in the bet. |
 | `join_duel` | Opponent | Match the bet + request randomness. |
 | `settle_duel` | Anyone | Resolve the match from VRF, pay the winner. |
-| `close_duel` | Creator / anyone | Cancel-refund an unmatched duel (creator only) or settle-sweep / stuck-game refund. |
+| `close_duel` | Creator / anyone | Cancel-refund an unmatched duel (creator only), or reclaim rent / stuck-VRF refund. |
 | `initialize_treasury` | Admin | One-time setup of the fee vault. |
 | `set_paused` / `set_max_bet` | Admin | Safety switches. |
 | `withdraw_treasury` | Admin | Collect accumulated fees. |
@@ -174,10 +180,11 @@ duelpvp/
 
 ---
 
-## � Verify it yourself
+## 🔍 Verify it yourself
 
-Don't trust — verify. The deployed program is built from this exact source. You
-can confirm the on-chain bytecode matches the code in this repo:
+Don't trust — verify. The deployed program is built from this exact source and is
+**verified on the OtterSec registry**. You can confirm the on-chain bytecode
+matches the code in this repo:
 
 ```bash
 # Hash of the program currently live on mainnet
@@ -192,9 +199,12 @@ Both commands return the **same** SHA-256 — proof the live program is exactly
 what you see here, with no hidden logic. The program also embeds an on-chain
 `security.txt` (project name, site, contact) that block explorers display.
 
+Verification status (live):
+<https://verify.osec.io/status/8NkYNEeX6eUiNrK89cHfNmZoigaUCdi5NLGKgRFJ77oZ>
+
 ---
 
-## �🛠️ Build & run (for developers)
+## 🛠️ Build & run (for developers)
 
 This program builds with the modern Solana toolchain. **Use `cargo build-sbf`,
 not `anchor build`.**
@@ -226,7 +236,7 @@ ANCHOR_WALLET=~/.config/solana/id.json \
 ```
 
 **Tech:** Anchor `0.29.0` · `orao-solana-vrf 0.4.0` · `@coral-xyz/anchor ^0.29` ·
-Solana CLI 4.x (Agave).
+Solana `1.18.x` build toolchain (`cargo build-sbf`).
 
 > 💡 Run a small **settle bot** in production that calls `settle_duel` the moment
 > randomness lands — players get instant payouts and the game stays snappy.
